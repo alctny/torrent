@@ -21,20 +21,20 @@ func Unmarshal(data []byte, res any) error {
 	}
 
 	reader := bytes.NewReader(data)
-	bo, err := Parser(reader)
+	bo, err := parser(reader)
 	if err != nil {
 		return err
 	}
 
-	switch bo.Type {
+	switch bo._type {
 	case BenInt, BenStr:
-		return set(rv, bo.Value)
+		return set(rv, bo._value)
 
 	case BenLst:
-		return unmarshalList(bo.Value.([]BenObject), rv.Elem())
+		return unmarshalList(bo._value.([]benObject), rv.Elem())
 
 	case BenDir:
-		return unmarshalDir(bo.Value.(map[string]BenObject), rv.Elem())
+		return unmarshalDir(bo._value.(map[string]benObject), rv.Elem())
 
 	default:
 		return errors.New("unknown type")
@@ -43,10 +43,10 @@ func Unmarshal(data []byte, res any) error {
 }
 
 // unmarshalList 反序列化列表类型的 BenObject
-func unmarshalList(bens []BenObject, ref reflect.Value) error {
+func unmarshalList(bens []benObject, ref reflect.Value) error {
 	refEl := elem(ref)
 	typ := refEl.Type()
-	if refEl.Kind() == reflect.Slice {
+	if refEl.Kind() == reflect.Slice || refEl.Kind() == reflect.Array {
 		typ = refEl.Type().Elem()
 	}
 
@@ -54,13 +54,13 @@ func unmarshalList(bens []BenObject, ref reflect.Value) error {
 	var err error
 	for i, v := range bens {
 		el := reflect.New(typ)
-		switch v.Type {
+		switch v._type {
 		case BenInt, BenStr:
-			err = set(el, v.Value)
+			err = set(el, v._value)
 		case BenLst:
-			err = unmarshalList(v.Value.([]BenObject), el)
+			err = unmarshalList(v._value.([]benObject), el)
 		case BenDir:
-			err = unmarshalDir(v.Value.(map[string]BenObject), el)
+			err = unmarshalDir(v._value.(map[string]benObject), el)
 		}
 		if err != nil {
 			return err
@@ -79,7 +79,7 @@ func unmarshalList(bens []BenObject, ref reflect.Value) error {
 }
 
 // unmarshalDir 反序列化字典类型的 BenObject
-func unmarshalDir(bens map[string]BenObject, ref reflect.Value) error {
+func unmarshalDir(bens map[string]benObject, ref reflect.Value) error {
 	el := elem(ref)
 	switch el.Kind() {
 	case reflect.Map, reflect.Interface:
@@ -92,7 +92,7 @@ func unmarshalDir(bens map[string]BenObject, ref reflect.Value) error {
 }
 
 // unmarshalMap 反序列化字典类型的 BenObject 到 map/any
-func unmarshalMap(bens map[string]BenObject, ref reflect.Value) error {
+func unmarshalMap(bens map[string]benObject, ref reflect.Value) error {
 	refEl := elem(ref)
 	keyTyp := reflect.TypeOf("")
 	valTyp := ref.Type()
@@ -104,13 +104,13 @@ func unmarshalMap(bens map[string]BenObject, ref reflect.Value) error {
 	var err error
 	for key, benv := range bens {
 		val := reflect.New(valTyp)
-		switch benv.Type {
+		switch benv._type {
 		case BenInt, BenStr:
-			err = set(val, benv.Value)
+			err = set(val, benv._value)
 		case BenLst:
-			err = unmarshalList(benv.Value.([]BenObject), val)
+			err = unmarshalList(benv._value.([]benObject), val)
 		case BenDir:
-			err = unmarshalDir(benv.Value.(map[string]BenObject), val)
+			err = unmarshalDir(benv._value.(map[string]benObject), val)
 		}
 		if err != nil {
 			return err
@@ -126,7 +126,7 @@ func unmarshalMap(bens map[string]BenObject, ref reflect.Value) error {
 }
 
 // unmarshalStruct 反序列化字典类型的 BenObject 到 struct
-func unmarshalStruct(bens map[string]BenObject, ref reflect.Value) error {
+func unmarshalStruct(bens map[string]benObject, ref reflect.Value) error {
 	el := elem(ref)
 
 	var err error
@@ -143,13 +143,13 @@ func unmarshalStruct(bens map[string]BenObject, ref reflect.Value) error {
 		if !ok {
 			continue
 		}
-		switch v.Type {
+		switch v._type {
 		case BenInt, BenStr:
-			err = set(el.Field(i), v.Value)
+			err = set(el.Field(i), v._value)
 		case BenLst:
-			err = unmarshalList(v.Value.([]BenObject), el.Field(i))
+			err = unmarshalList(v._value.([]benObject), el.Field(i))
 		case BenDir:
-			err = unmarshalDir(v.Value.(map[string]BenObject), el.Field(i))
+			err = unmarshalDir(v._value.(map[string]benObject), el.Field(i))
 		}
 		if err != nil {
 			return err

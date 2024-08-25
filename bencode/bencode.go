@@ -2,6 +2,7 @@ package bencode
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ const (
 
 var (
 	ErrType = errors.New("type error")
-
 	// TODO : 这些方法并不能帮助排查错误，需要优化
 	ErrInt        = errors.New("type error, not int")
 	ErrStr        = errors.New("type error, not string")
@@ -29,55 +29,20 @@ var (
 	ErrUnknowByte = errors.New("unknow byte")
 )
 
-type BenObject struct {
-	Type  BenType
-	Value any
-}
-
-// // Int returns the integer value of the BenObject.
-// func (b *BenObject) Int() (int64, error) {
-// 	if b.Type != BenInt {
-// 		return 0, ErrType
-// 	}
-// 	return b.Value.(int64), nil
-// }
-
-// // String returns the string value of the BenObject.
-// func (b *BenObject) String() (string, error) {
-// 	if b.Type != BenStr {
-// 		return "", ErrType
-// 	}
-// 	return b.Value.(string), nil
-// }
-
-// func (b *BenObject) Array() ([]BenObject, error) {
-// 	if b.Type != BenLst {
-// 		return nil, ErrType
-// 	}
-// 	return b.Value.([]BenObject), nil
-// }
-
-// func (b *BenObject) Dictory() (map[string]BenObject, error) {
-// 	if b.Type != BenDir {
-// 		return nil, ErrType
-// 	}
-// 	return b.Value.(map[string]BenObject), nil
-// }
-
-type BenTree struct {
-	Type  BenType
-	Value *BenObject
-	Nodes []*BenObject
+type benObject struct {
+	_type  BenType
+	_value any
 }
 
 // TODO: 兼容负数，浮点数
-// DecodeInt 解析 Int
-func DecodeInt(data io.Reader) (int64, error) {
+// decodeInt 解析 Int
+func decodeInt(data io.Reader) (int64, error) {
 	reader := bufio.NewReader(data)
 	first, err := reader.ReadByte()
 	if err != nil {
 		return 0, err
 	}
+
 	if first != 'i' {
 		return 0, ErrInt
 	}
@@ -87,7 +52,7 @@ func DecodeInt(data io.Reader) (int64, error) {
 	for {
 		b, err := reader.ReadByte()
 		if err != nil {
-			return 0, ErrInt
+			return 0, errors.Join(ErrInt, err)
 		}
 
 		switch b {
@@ -106,12 +71,13 @@ func DecodeInt(data io.Reader) (int64, error) {
 	}
 }
 
-// DecodeString 解析 string
-func DecodeString(data io.Reader) (string, error) {
+// decodeString 解析 string
+func decodeString(data io.Reader) (string, error) {
 	reader := bufio.NewReader(data)
 	len := 0
 	var b byte
 	var err error
+
 	for {
 		b, err = reader.ReadByte()
 		if err != nil {
@@ -125,14 +91,11 @@ func DecodeString(data io.Reader) (string, error) {
 		}
 		len = len*10 + int(b-'0')
 	}
+	if len == 0 {
+		return "", nil
+	}
 
 	strBuf := make([]byte, len)
-
-	// err = readN(data, strBuf)
-	// if err != nil {
-	// 	return "", err
-	// }
-	// return string(strBuf), nil
 
 	// reader.Read 虽然效率高，但存在一个问题，如果字符串长度超过缓冲区，需要二次读取
 	// reader.ReadByte() 虽然读取效率低一些，但是代码会更加简洁易懂
@@ -147,7 +110,7 @@ func DecodeString(data io.Reader) (string, error) {
 	return string(strBuf), nil
 }
 
-func DecodeList(buf io.Reader) ([]BenObject, error) {
+func decodeList(buf io.Reader) ([]benObject, error) {
 	reader := bufio.NewReader(buf)
 	b, err := reader.ReadByte()
 	if err != nil {
@@ -157,44 +120,45 @@ func DecodeList(buf io.Reader) ([]BenObject, error) {
 		return nil, ErrLst
 	}
 
-	res := []BenObject{}
+	res := []benObject{}
 	for {
 		first, err := reader.Peek(1)
 		if err != nil {
 			return nil, err
 		}
+
 		switch first[0] {
 		case 'e':
 			reader.ReadByte()
 			return res, nil
 
 		case 'i':
-			i, err := DecodeInt(reader)
+			i, err := decodeInt(reader)
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, BenObject{BenInt, i})
+			res = append(res, benObject{BenInt, i})
 
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			bstr, err := DecodeString(reader)
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			bstr, err := decodeString(reader)
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, BenObject{BenStr, bstr})
+			res = append(res, benObject{BenStr, bstr})
 
 		case 'l':
-			lis, err := DecodeList(reader)
+			lis, err := decodeList(reader)
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, BenObject{BenLst, lis})
+			res = append(res, benObject{BenLst, lis})
 
 		case 'd':
-			dic, err := DecodeDict(reader)
+			dic, err := decodeDict(reader)
 			if err != nil {
 				return nil, err
 			}
-			res = append(res, BenObject{BenDir, dic})
+			res = append(res, benObject{BenDir, dic})
 
 		default:
 			return nil, ErrUnknowByte
@@ -204,7 +168,7 @@ func DecodeList(buf io.Reader) ([]BenObject, error) {
 
 }
 
-func DecodeDict(buf io.Reader) (map[string]BenObject, error) {
+func decodeDict(buf io.Reader) (map[string]benObject, error) {
 	reader := bufio.NewReader(buf)
 	b, err := reader.ReadByte()
 	if err != nil {
@@ -214,19 +178,20 @@ func DecodeDict(buf io.Reader) (map[string]BenObject, error) {
 		return nil, ErrDic
 	}
 
-	res := map[string]BenObject{}
+	res := map[string]benObject{}
 	for {
 		first, err := reader.Peek(1)
 		if err != nil {
 			return nil, err
 		}
+
 		if first[0] == 'e' {
 			reader.ReadByte()
 			return res, nil
 		}
 
 		// parser key
-		key, err := DecodeString(reader)
+		key, err := decodeString(reader)
 		if err != nil {
 			return nil, err
 		}
@@ -242,32 +207,32 @@ func DecodeDict(buf io.Reader) (map[string]BenObject, error) {
 
 		switch first[0] {
 		case 'i':
-			i, err := DecodeInt(reader)
+			i, err := decodeInt(reader)
 			if err != nil {
 				return nil, err
 			}
-			res[key] = BenObject{BenInt, i}
+			res[key] = benObject{BenInt, i}
 
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			s, err := DecodeString(reader)
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			s, err := decodeString(reader)
 			if err != nil {
 				return nil, err
 			}
-			res[key] = BenObject{BenStr, s}
+			res[key] = benObject{BenStr, s}
 
 		case 'l':
-			lis, err := DecodeList(reader)
+			lis, err := decodeList(reader)
 			if err != nil {
 				return nil, err
 			}
-			res[key] = BenObject{BenLst, lis}
+			res[key] = benObject{BenLst, lis}
 
 		case 'd':
-			dic, err := DecodeDict(reader)
+			dic, err := decodeDict(reader)
 			if err != nil {
 				return nil, err
 			}
-			res[key] = BenObject{BenDir, dic}
+			res[key] = benObject{BenDir, dic}
 
 		case 'e':
 			return nil, fmt.Errorf("direct has key but no value")
@@ -279,47 +244,69 @@ func DecodeDict(buf io.Reader) (map[string]BenObject, error) {
 
 }
 
-func Parser(buf io.Reader) (*BenObject, error) {
+// TODO: 把 io.Reader 改为 bufio.Reader，因为是私有函数，并非对外提供的接口
+// 不需要考虑兼容 io.Reader 和做无意义的转化 && 封装
+func parser(buf io.Reader) (*benObject, error) {
 	reader := bufio.NewReader(buf)
 	first, err := reader.Peek(1)
 	if err != nil {
 		return nil, err
 	}
 
-	var res *BenObject
+	var res *benObject
 
 	switch first[0] {
 	case 'i':
-		i, err := DecodeInt(reader)
-		if err != nil {
-			return nil, err
-		}
-		res = &BenObject{BenInt, i}
+		var i int64
+		i, err = decodeInt(reader)
+		res = &benObject{BenInt, i}
 
 	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		s, err := DecodeString(reader)
-		if err != nil {
-			return nil, err
-		}
-		res = &BenObject{BenStr, s}
+		var s string
+		s, err = decodeString(reader)
+		res = &benObject{BenStr, s}
 
 	case 'l':
-		lis, err := DecodeList(reader)
-		if err != nil {
-			return nil, err
-		}
-		res = &BenObject{BenLst, lis}
+		var lis []benObject
+		lis, err = decodeList(reader)
+		res = &benObject{BenLst, lis}
 
 	case 'd':
-		dis, err := DecodeDict(reader)
-		if err != nil {
-			return nil, err
-		}
-		res = &BenObject{BenDir, dis}
+		var dis map[string]benObject
+		dis, err = decodeDict(reader)
+		res = &benObject{BenDir, dis}
 
 	default:
 		return nil, ErrType
 	}
 
-	return res, nil
+	return res, err
+}
+
+// encodeInt 编码 int
+func encodeInt(w *bytes.Buffer, i int64) error {
+	err := w.WriteByte('i')
+	if err != nil {
+		return err
+	}
+	_, err = w.WriteString(fmt.Sprint(i))
+	if err != nil {
+		return err
+	}
+	return w.WriteByte('e')
+}
+
+// encodeString 编码 string
+func encodeString(bw *bytes.Buffer, s string) error {
+	length := len(s)
+	if length == 0 {
+		return nil
+	}
+	_, err := bw.WriteString(fmt.Sprint((length)))
+	if err != nil {
+		return err
+	}
+	bw.WriteByte(':')
+	_, err = bw.WriteString(s)
+	return err
 }
